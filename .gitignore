@@ -1,0 +1,9 @@
+# 依赖与构建
+node_modules/
+.DS_Store
+
+# Vercel
+.vercel/
+
+# 备份
+*.backup.json

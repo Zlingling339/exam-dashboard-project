@@ -1,0 +1,14 @@
+{
+  "name": "ExamDashboard · 多考试备考仪表盘",
+  "short_name": "ExamDashboard",
+  "description": "多考试备考仪表盘：考试倒计时、章节打卡、学习热力图、番茄钟、AI 复盘",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1a130e",
+  "theme_color": "#241a12",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
