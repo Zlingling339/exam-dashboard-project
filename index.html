@@ -190,6 +190,18 @@ label{display:block;font-size:12px;color:var(--txt-dim);margin:12px 0 5px;font-w
 }
 .tool-btn:hover{color:var(--txt);background:rgba(40,26,16,.9)}
 .tool-btn.active{background:linear-gradient(135deg,var(--a1),var(--a2));color:#1c1109;border-color:transparent}
+/* 嵌入异常提示条 */
+.frame-hint{
+  position:absolute;top:46px;left:10px;right:10px;z-index:29;
+  display:none;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;
+  padding:8px 12px;border-radius:10px;font-size:12px;line-height:1.5;
+  background:rgba(127,29,29,.88);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  border:1px solid rgba(239,68,68,.45);color:#fecaca;
+  box-shadow:0 8px 24px rgba(0,0,0,.35);
+}
+.frame-hint.show{display:flex}
+.frame-hint .tool-btn{background:rgba(255,255,255,.14);color:#fecaca;border-color:rgba(255,255,255,.25)}
+.frame-hint .tool-btn:hover{background:rgba(255,255,255,.24);color:#fff}
 /* 粘贴跳转兜底 */
 .jump-row{
   display:flex;gap:8px;width:100%;max-width:400px;margin-top:4px;
@@ -410,6 +422,11 @@ label{display:block;font-size:12px;color:var(--txt-dim);margin:12px 0 5px;font-w
           <button type="button" id="btnFit" class="tool-btn" title="缩放适配嵌入页面，消除横向滚动条">⤢ 适配</button>
           <button type="button" id="btnRestoreDash" class="tool-btn" title="展开考试面板" style="display:none">📊 面板</button>
         </div>
+        <div class="frame-hint" id="frameHint">
+          <span>⚠️ 页面反复刷新？登录状态（Cookie）可能被浏览器拦截，无法在嵌入窗口中保持</span>
+          <button type="button" id="hintOpen" class="tool-btn">↗ 新标签打开</button>
+          <button type="button" id="hintClose" class="tool-btn">知道了</button>
+        </div>
         <div class="frame-empty" id="frameEmpty">
           <svg class="xh-empty" viewBox="0 0 260 150" aria-hidden="true">
             <!-- 虚线框：等待被填写的考试 -->
@@ -619,16 +636,17 @@ function renderDash(){
   $('dChap').textContent=`${e.completed} / ${e.total}`;
   $('dBar').style.width=pct(e)+'%';
   $('dRate').value=e.correctRate||0;
-  const today=state.studyLog[todayKey()]||0;
-  $('dToday').textContent= today+' 分钟';
+  const today=(state.studyLog[todayKey()]||0)+liveFocusMin();
+  $('dToday').textContent=Math.floor(today*10)/10+' 分钟';
   $('dGoal').textContent=state.dailyGoal||60;
-  $('dTotal').textContent=state.totalMinutes+' 分钟';
+  $('dTotal').textContent=Math.floor((state.totalMinutes+liveFocusMin())*10)/10+' 分钟';
   $('openExt').href=e.url||'#';
   renderHeatmap();
   renderTodayStat();
 }
 function renderTodayStat(){
-  $('todayStat').textContent=`今日专注 ${state.studyLog[todayKey()]||0} 分钟`;
+  const today=(state.studyLog[todayKey()]||0)+liveFocusMin();
+  $('todayStat').textContent=`今日专注 ${Math.floor(today*10)/10} 分钟`;
 }
 
 /* ================= 热力图 ================= */
@@ -714,13 +732,34 @@ function switchExam(id){
   if(!frames[e.id]){
     const f=document.createElement('iframe');
     f.src=e.url;f.setAttribute('allow','clipboard-read;clipboard-write');
-    f.setAttribute('sandbox','allow-scripts allow-same-origin allow-forms allow-popups');
+    f.setAttribute('sandbox','allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation-by-user-activation');
     f.onerror=()=>{f.style.display='none';$('frameEmpty').style.display='flex';$('emptyText').innerHTML='⚠️ 该网页不允许嵌入<br>请使用下方跳转功能';};
+    /* 反复刷新检测：登录类网站 Cookie 被浏览器拦截时会高频重载 */
+    f.addEventListener('load',()=>{
+      const now=Date.now();
+      loadLog.push(now);
+      loadLog=loadLog.filter(t=>now-t<30000);
+      if(loadLog.length>=4)showFrameHint();
+    });
     $('frameWrap').appendChild(f);frames[e.id]=f;
   }
   frames[e.id].style.display='block';
   applyFit();
 }
+
+/* ================= 嵌入异常提示 ================= */
+let loadLog=[];
+let hintTimer=null;
+function showFrameHint(){
+  const h=$('frameHint');
+  if(h&&!h.classList.contains('show')){
+    h.classList.add('show');
+    clearTimeout(hintTimer);
+    hintTimer=setTimeout(()=>h.classList.remove('show'),12000);
+  }
+}
+$('hintOpen').onclick=()=>{const e=curExam();if(e&&e.url)window.open(e.url,'_blank','noopener')};
+$('hintClose').onclick=()=>$('frameHint').classList.remove('show');
 
 /* ================= 面板折叠 & 嵌入适配 ================= */
 $('btnCloseDash').onclick=()=>{
@@ -870,7 +909,7 @@ $('dRate').onchange=()=>{const e=curExam();if(e){e.correctRate=Math.min(100,Math
 
 /* ================= 番茄钟 ================= */
 const FOCUS=25*60,BREAK=5*60;
-let pomo={mode:'focus',remain:FOCUS,running:false,timer:null};
+var pomo={mode:'focus',remain:FOCUS,running:false,timer:null,elapsed:0,lastTick:0};
 function fmt(s){return`${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`}
 function renderPomo(){
   $('pomoTime').textContent=fmt(pomo.remain);
@@ -883,28 +922,52 @@ function renderPomo(){
     if(note)note.textContent=pomo.mode==='break'?'休息':'专注';
   }
 }
+/* 进行中的专注分钟（实时显示用，完成时才写入存储） */
+function liveFocusMin(){
+  return (pomo.mode==='focus'&&pomo.running)?pomo.elapsed/60:0;
+}
+/* 每秒刷新今日/累计/状态栏（轻量，仅改文本） */
+function updateTodayLive(){
+  const today=(state.studyLog[todayKey()]||0)+liveFocusMin();
+  const t=$('dToday'),tot=$('dTotal'),st=$('todayStat');
+  if(t)t.textContent=Math.floor(today*10)/10+' 分钟';
+  if(tot)tot.textContent=Math.floor((state.totalMinutes+liveFocusMin())*10)/10+' 分钟';
+  if(st)st.textContent=`今日专注 ${Math.floor(today*10)/10} 分钟`;
+}
 function beep(){
   try{const ctx=new(window.AudioContext||window.webkitAudioContext)();const o=ctx.createOscillator(),g=ctx.createGain();o.connect(g);g.connect(ctx.destination);o.frequency.value=880;g.gain.setValueAtTime(.2,ctx.currentTime);g.gain.exponentialRampToValueAtTime(.001,ctx.currentTime+.8);o.start();o.stop(ctx.currentTime+.8)}catch(e){}
 }
 function tick(){
-  pomo.remain--;
+  /* 用时间戳差校准：后台标签页定时器被节流时补上流逝时间 */
+  const now=Date.now();
+  const delta=Math.min(3600,Math.max(1,Math.round((now-pomo.lastTick)/1000)));
+  pomo.lastTick=now;
+  pomo.remain-=delta;
+  pomo.elapsed+=delta;
   if(pomo.remain<=0){
     beep();
     if(pomo.mode==='focus'){
-      const k=todayKey();state.studyLog[k]=(state.studyLog[k]||0)+25;state.totalMinutes+=25;save();renderDash();
-      pomo.mode='break';pomo.remain=BREAK;
+      const k=todayKey();state.studyLog[k]=(state.studyLog[k]||0)+FOCUS/60;state.totalMinutes+=FOCUS/60;save();renderDash();
+      pomo.mode='break';pomo.remain=BREAK;pomo.elapsed=0;
       if(Notification.permission==='granted')new Notification('🍅 专注完成，休息 5 分钟');
-    }else{pomo.mode='focus';pomo.remain=FOCUS;if(Notification.permission==='granted')new Notification('☕ 休息结束，继续加油')}
+    }else{pomo.mode='focus';pomo.remain=FOCUS;pomo.elapsed=0;if(Notification.permission==='granted')new Notification('☕ 休息结束，继续加油')}
   }
   renderPomo();
+  if(pomo.mode==='focus'&&pomo.running){
+    updateTodayLive();
+    /* 整分钟时完整刷新一次（热力图格子颜色分钟级变化） */
+    if(pomo.elapsed%60<delta)renderDash();
+  }
 }
 $('pomoToggle').onclick=()=>{
   if('Notification'in window&&Notification.permission==='default')Notification.requestPermission();
   pomo.running=!pomo.running;
-  if(pomo.running)pomo.timer=setInterval(tick,1000);else clearInterval(pomo.timer);
+  if(pomo.running){pomo.lastTick=Date.now();pomo.timer=setInterval(tick,1000);}
+  else clearInterval(pomo.timer);
   renderPomo();
+  updateTodayLive();
 };
-$('pomoReset').onclick=()=>{clearInterval(pomo.timer);pomo={mode:'focus',remain:FOCUS,running:false,timer:null};renderPomo()};
+$('pomoReset').onclick=()=>{clearInterval(pomo.timer);pomo={mode:'focus',remain:FOCUS,running:false,timer:null,elapsed:0,lastTick:0};renderPomo();renderDash()};
 
 /* ================= AI接口 ================= */
 function buildPrompt(type){
